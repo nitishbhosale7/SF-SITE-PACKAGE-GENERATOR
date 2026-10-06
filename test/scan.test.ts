@@ -6,11 +6,12 @@ import { test } from 'node:test';
 import { Inventory } from '../src/core/inventory';
 import { buildPackageXml, manifestFileName } from '../src/core/packageXml';
 import { COVERED_BY_BUNDLE, applyDefaultTicks } from '../src/core/resolver';
-import { scanDirectory } from '../src/core/scan';
+import { scanDirectory, withoutOwnNamespace } from '../src/core/scan';
 import { scanApex, scanFlow, scanNamedCredential, scanVisualforce } from '../src/core/scan/apex';
 import { scanBundleJson } from '../src/core/scan/bundle';
 import { scanAura, scanLwc } from '../src/core/scan/lwc';
 import { scanCustomSite, scanNetwork, tagValue } from '../src/core/scan/network';
+import { Limiter } from '../src/core/sf';
 import { Item, Ref } from '../src/core/types';
 
 function inventory(): Inventory {
@@ -241,4 +242,62 @@ test('package.xml: sorted, escaped, never emits profiles', () => {
   assert.ok(xml.includes('<version>65.0</version>'));
   assert.equal(manifestFileName('otarmeni-hcp'), 'package-otarmeni-hcp.xml');
   assert.equal(manifestFileName('R&D site'), 'package-R_D_site.xml');
+});
+
+test('a namespaced org: its own prefix is not treated as a managed package', () => {
+  const inv = new Inventory(undefined as any);
+  inv.ownNamespace = 'myns';
+  inv.set('ApexClass', [
+    { fullName: 'OwnClass', namespacePrefix: 'myns', manageableState: 'unmanaged' },
+    { fullName: 'InstalledClass', namespacePrefix: 'pkg', manageableState: 'installed' },
+  ]);
+  inv.set('CustomObject', [{ fullName: 'Thing__c', namespacePrefix: 'myns', manageableState: 'unmanaged' }]);
+
+  assert.deepEqual(inv.names('ApexClass'), ['OwnClass']);
+  assert.equal(inv.find('ApexClass', 'InstalledClass'), undefined);
+  // The org's own components can be spelled with or without its prefix.
+  assert.equal(inv.find('CustomObject', 'Thing__c'), 'Thing__c');
+  assert.equal(inv.find('CustomObject', 'myns__Thing__c'), 'Thing__c');
+
+  inv.set('LightningComponentBundle', [{ fullName: 'siteHeader', namespacePrefix: 'myns', manageableState: 'unmanaged' }]);
+  inv.set('CustomLabel', [{ fullName: 'Site_Title', namespacePrefix: 'myns', manageableState: 'unmanaged' }]);
+  const plain = (s: string) => withoutOwnNamespace(s, inv.ownNamespace);
+  assert.deepEqual(keys(scanBundleJson(plain('{"definition": "myns:siteHeader"}'), inv)), ['LightningComponentBundle:siteHeader']);
+  assert.deepEqual(
+    keys(
+      scanLwc(
+        [{ path: 'a.js', text: plain("import run from '@salesforce/apex/myns.OwnClass.run'; import T from '@salesforce/label/myns.Site_Title';") }],
+        'a',
+        inv,
+      ),
+    ),
+    ['ApexClass:OwnClass', 'CustomLabel:Site_Title'],
+  );
+  assert.deepEqual(keys(scanApex('myns.OwnClass.run(); pkg.InstalledClass.run();', 'Caller', inv)), []);
+  assert.deepEqual(keys(scanApex(plain('myns.OwnClass.run(); pkg.InstalledClass.run();'), 'Caller', inv)), ['ApexClass:OwnClass']);
+});
+
+test('Limiter: never runs more than its limit, and cancel rejects what is waiting', async () => {
+  const limiter = new Limiter(3);
+  let running = 0;
+  let peak = 0;
+  const task = async (n: number) => {
+    peak = Math.max(peak, ++running);
+    await new Promise((r) => setTimeout(r, 5));
+    running--;
+    return n;
+  };
+  const results = await Promise.all(Array.from({ length: 20 }, (_, n) => limiter.run(() => task(n))));
+  assert.equal(peak, 3);
+  assert.deepEqual(results, Array.from({ length: 20 }, (_, n) => n));
+
+  const one = new Limiter(1);
+  const first = one.run(() => task(1));
+  const queued = one.run(() => task(2));
+  const rejected = assert.rejects(queued, /Cancelled/);
+  one.cancel(new Error('Cancelled.'));
+  // A task that was already running is left to finish.
+  assert.equal(await first, 1);
+  await rejected;
+  await assert.rejects(one.run(() => task(3)), /Cancelled/);
 });

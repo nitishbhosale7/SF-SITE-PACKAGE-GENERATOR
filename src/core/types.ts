@@ -45,4 +45,6 @@ export interface Lookup {
   /** Case-sensitive match. */
   exact(type: string, name: string): string | undefined;
   names(type: string): string[];
+  /** The org's own namespace prefix, when it has one. */
+  ownNamespace?: string;
 }

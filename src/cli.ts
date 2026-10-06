@@ -9,7 +9,16 @@ import { Sf } from './core/sf';
 // Usage (from inside an SFDX project):
 //   sf-site-package --list
 //   sf-site-package --deps LightningComponentBundle:myComponent
-//   sf-site-package "<site name>" [--out manifest/package-site.xml] [--target-org alias] [--why] [--include-covered]
+//   sf-site-package "<site name>" [--out manifest/package-site.xml] [--target-org alias] [--why] [--include-covered] [--parallel 3]
+let active: Sf | undefined;
+// Stopping the command must not leave `sf` processes running behind it.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    active?.dispose();
+    process.exit(130);
+  });
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const flag = (name: string) => {
@@ -18,13 +27,15 @@ async function main(): Promise<void> {
   };
   const targetOrg = flag('--target-org');
   const out = flag('--out');
+  // How many `sf` processes may run at once (1-6); fewer uses less memory and takes longer.
+  const parallel = Number(flag('--parallel')) || undefined;
   const why = args.includes('--why');
   // Also tick what the site bundle already covers (Network, Audience, trusted sites).
   const includeCovered = args.includes('--include-covered');
   const list = args.includes('--list');
   const siteName = args.find((a) => !a.startsWith('--'));
 
-  const sf = new Sf(process.cwd(), 'sf', targetOrg);
+  const sf = (active = new Sf(process.cwd(), 'sf', targetOrg, parallel));
 
   // --deps Type:Name[,Type:Name] lists what the given components depend on, without picking a site.
   const deps = flag('--deps');

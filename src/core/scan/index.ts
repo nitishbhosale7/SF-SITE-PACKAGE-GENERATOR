@@ -32,6 +32,19 @@ const safeDecode = (s: string) => {
   }
 };
 
+/**
+ * In an org with its own namespace, Salesforce writes that namespace where an org without one
+ * writes `c` (`myns:header`, `myns.MyClass`). Rewrite those to the plain form the scanners expect.
+ */
+export function withoutOwnNamespace(text: string, namespace: string | undefined): string {
+  if (!namespace) return text;
+  const ns = namespace.replace(/[^\w]/g, '');
+  return text
+    .replace(new RegExp(`\\b${ns}:(?=\\w)`, 'gi'), 'c:')
+    .replace(new RegExp(`(@salesforce/label/|\\$Label\\.)${ns}\\.`, 'gi'), '$1c.')
+    .replace(new RegExp(`\\b${ns}\\.(?=[A-Za-z_])`, 'gi'), '');
+}
+
 const stripMeta = (file: string, ext: string) => file.replace(new RegExp(`\\.${ext}(-meta\\.xml)?$`), '');
 
 /**
@@ -39,7 +52,7 @@ const stripMeta = (file: string, ext: string) => file.replace(new RegExp(`\\.${e
  * found there, the components it references.
  */
 export function scanDirectory(root: string, lk: Lookup): Scanned[] {
-  const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
+  const read = (rel: string) => withoutOwnNamespace(fs.readFileSync(path.join(root, rel), 'utf8'), lk.ownNamespace);
   const bundles = new Map<string, { type: string; name: string; files: SourceFile[] }>();
   const results: Scanned[] = [];
 

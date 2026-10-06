@@ -13,8 +13,25 @@ export class Inventory implements Lookup {
   private readonly loading = new Map<string, Promise<void>>();
   private readonly listed = new Map<string, number>();
   readonly failed: string[] = [];
+  /**
+   * The org's own namespace. Everything created in a namespaced Developer Edition org carries
+   * this prefix without being part of an installed package, so it must not be treated as managed.
+   */
+  ownNamespace = '';
+  private namespaceLoading?: Promise<void>;
 
   constructor(private readonly sf: Sf) {}
+
+  private loadNamespace(): Promise<void> {
+    this.namespaceLoading ??= this.sf
+      .orgNamespace()
+      .then((ns) => {
+        this.ownNamespace = ns;
+      })
+      // Without it, prefixed components stay hidden, as in an org with no namespace.
+      .catch(() => {});
+    return this.namespaceLoading;
+  }
 
   async preload(types: string[], progress?: (message: string) => void): Promise<void> {
     let done = 0;
@@ -28,8 +45,8 @@ export class Inventory implements Lookup {
     if (!this.loading.has(type)) {
       this.loading.set(
         type,
-        this.sf
-          .listMetadata(type)
+        this.loadNamespace()
+          .then(() => this.sf.listMetadata(type))
           .then((list) => {
             this.set(type, list);
             this.listed.set(type, Date.now());
@@ -62,14 +79,18 @@ export class Inventory implements Lookup {
       map.set(f.fullName.toLowerCase(), {
         fullName: f.fullName,
         id: f.id || undefined,
-        managed: !!f.namespacePrefix || f.manageableState === 'installed',
+        managed: f.manageableState === 'installed' || (!!f.namespacePrefix && f.namespacePrefix !== this.ownNamespace),
       });
     }
     this.types.set(type, map);
   }
 
   find(type: string, name: string): string | undefined {
-    const e = this.types.get(type)?.get(name.toLowerCase());
+    const map = this.types.get(type);
+    const key = name.toLowerCase();
+    // Code in a namespaced org may spell its own components with or without the org's prefix.
+    const own = this.ownNamespace.toLowerCase() + '__';
+    const e = map?.get(key) ?? (own.length > 2 && key.startsWith(own) ? map?.get(key.slice(own.length)) : undefined);
     return e && !e.managed ? e.fullName : undefined;
   }
 

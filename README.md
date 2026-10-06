@@ -2,6 +2,8 @@
 
 Pick an Experience Cloud site and get a `package.xml` for the site and everything it depends on. Add any other metadata from the org on top.
 
+![Choosing a site and generating its package.xml](media/Vs%20Code%20extension%20usage.gif)
+
 ## What it collects
 
 Starting from the site you pick, it follows references until nothing new turns up:
@@ -75,5 +77,9 @@ npm run package # build a .vsix
 ```
 
 Requires the Salesforce CLI (`sf`) on your PATH, or set `sitePackageGen.sfPath`.
+
+### Memory
+
+Every Salesforce call runs as a separate `sf` process of several hundred MB. At most three run at once by default; change `sitePackageGen.maxParallelCliCalls` (1–6) to trade memory for speed, or pass `--parallel` on the command line. Closing the panel during a scan stops its `sf` processes.
 
 Developed by [Nitish Bhosale](https://www.linkedin.com/in/nitishbhosale07).

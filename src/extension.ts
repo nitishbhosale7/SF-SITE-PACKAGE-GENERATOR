@@ -51,10 +51,11 @@ class SitePanel {
   private org = '';
   private metadataTypes: { xmlName: string; inFolder: boolean }[] | undefined;
   private busy = false;
+  private disposed = false;
 
   private constructor(private readonly context: vscode.ExtensionContext, private readonly root: string) {
     const config = vscode.workspace.getConfiguration('sitePackageGen');
-    this.sf = new Sf(root, config.get<string>('sfPath') || 'sf');
+    this.sf = new Sf(root, config.get<string>('sfPath') || 'sf', undefined, config.get<number>('maxParallelCliCalls'));
     // Kept for the lifetime of the panel so a second site, and "View all in org", skip re-indexing.
     this.inventory = new Inventory(this.sf);
 
@@ -65,11 +66,21 @@ class SitePanel {
       localResourceRoots: [media],
     });
     this.panel.webview.html = this.html(media);
-    this.panel.onDidDispose(() => (SitePanel.current = undefined), null, context.subscriptions);
+    this.panel.onDidDispose(
+      () => {
+        SitePanel.current = undefined;
+        this.disposed = true;
+        // Closing the panel mid-scan stops the scan, rather than leaving `sf` processes running.
+        this.sf.dispose();
+      },
+      null,
+      context.subscriptions,
+    );
     this.panel.webview.onDidReceiveMessage((m) => this.onMessage(m), null, context.subscriptions);
   }
 
   private post(message: unknown): void {
+    if (this.disposed) return;
     this.panel.webview.postMessage(message);
   }
 

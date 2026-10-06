@@ -2,9 +2,14 @@
   "name": "sf-site-package-generator",
   "displayName": "Salesforce Site Package.xml Generator",
   "description": "Pick an Experience Cloud site and generate a package.xml for the site and everything it depends on",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "publisher": "nitishbhosale7",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nitishbhosale7/SF-SITE-PACKAGE-GENERATOR.git"
+  },
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -38,6 +43,13 @@
           "type": "string",
           "default": "sf",
           "description": "Path to the Salesforce CLI executable."
+        },
+        "sitePackageGen.maxParallelCliCalls": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 6,
+          "description": "How many Salesforce CLI processes may run at once. Each uses several hundred MB of memory; a lower number uses less memory and makes scans slower. Takes effect the next time the panel is opened."
         },
         "sitePackageGen.includeTestClasses": {
           "type": "boolean",

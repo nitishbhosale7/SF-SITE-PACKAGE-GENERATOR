@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { ChildProcess, execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildPackageXml } from './packageXml';
@@ -20,29 +20,83 @@ export interface OrgInfo {
 
 const isWin = process.platform === 'win32';
 
+/** Each `sf` call is its own process of several hundred MB, so only a few may run at once. */
+export const DEFAULT_PARALLEL = 3;
+const MAX_PARALLEL = 6;
+
+/** Lets at most `limit` tasks run at once; the rest wait their turn in order. */
+export class Limiter {
+  private running = 0;
+  private cancelled: Error | undefined;
+  private readonly waiting: { start: () => void; fail: (e: Error) => void }[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.cancelled) throw this.cancelled;
+    if (this.running >= this.limit) {
+      // The finishing task hands its slot straight to the next in line, so `running` is unchanged.
+      await new Promise<void>((start, fail) => this.waiting.push({ start, fail }));
+    } else {
+      this.running++;
+    }
+    try {
+      return await task();
+    } finally {
+      const next = this.waiting.shift();
+      if (next) next.start();
+      else this.running--;
+    }
+  }
+
+  /** Reject everything still waiting, and anything submitted later. */
+  cancel(reason: Error): void {
+    this.cancelled = reason;
+    for (const w of this.waiting.splice(0)) w.fail(reason);
+  }
+}
+
 /** Thin wrapper over the Salesforce CLI. Every call is read-only against the org. */
 export class Sf {
+  private readonly limiter: Limiter;
+  private readonly children = new Set<ChildProcess>();
+
   constructor(
     private readonly cwd: string,
     private readonly sfPath = 'sf',
     private readonly targetOrg?: string,
-  ) {}
+    parallel = DEFAULT_PARALLEL,
+  ) {
+    this.limiter = new Limiter(Math.min(MAX_PARALLEL, Math.max(1, Math.floor(parallel) || DEFAULT_PARALLEL)));
+  }
+
+  /** Stop every `sf` process this instance started and refuse further calls. */
+  dispose(): void {
+    this.limiter.cancel(new Error('Cancelled.'));
+    for (const child of this.children) child.kill();
+    this.children.clear();
+  }
 
   private exec(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+    return this.limiter.run(() => this.spawn(args));
+  }
+
+  private spawn(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
     const full = this.targetOrg ? [...args, '--target-org', this.targetOrg] : args;
     // sf is a .cmd shim on Windows, which execFile can only run through a shell.
     const finalArgs = isWin ? full.map((a) => `"${a.replace(/"/g, '\\"')}"`) : full;
     return new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         this.sfPath,
         finalArgs,
         {
           cwd: this.cwd,
-          maxBuffer: 512 * 1024 * 1024,
+          maxBuffer: 64 * 1024 * 1024,
           shell: isWin,
           env: { ...process.env, SF_AUTOUPDATE_DISABLE: 'true', FORCE_COLOR: '0' },
         },
         (err, stdout, stderr) => {
+          this.children.delete(child);
           if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
             reject(new Error(`Salesforce CLI not found ("${this.sfPath}"). Install it or set sitePackageGen.sfPath.`));
             return;
@@ -51,6 +105,7 @@ export class Sf {
           resolve({ stdout: String(stdout), stderr: String(stderr), code });
         },
       );
+      this.children.add(child);
     });
   }
 
@@ -80,6 +135,12 @@ export class Sf {
     if (tooling) args.push('--use-tooling-api');
     const r = await this.json(args);
     return r.records ?? [];
+  }
+
+  /** The org's own namespace prefix, or '' when it has none. */
+  async orgNamespace(): Promise<string> {
+    const rows = await this.query<any>('SELECT NamespacePrefix FROM Organization');
+    return rows[0]?.NamespacePrefix ?? '';
   }
 
   async listMetadata(type: string): Promise<FileProperties[]> {
