@@ -1,0 +1,64 @@
+{
+  "name": "sf-site-package-generator",
+  "displayName": "Salesforce Site Package.xml Generator",
+  "description": "Pick an Experience Cloud site and generate a package.xml for the site and everything it depends on",
+  "version": "0.3.1",
+  "publisher": "nitishbhosale7",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "salesforce",
+    "sfdx",
+    "package.xml",
+    "experience cloud",
+    "digital experience"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "bin": {
+    "sf-site-package": "./out/cli.js"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "sitePackageGen.chooseSite",
+        "title": "Choose Site",
+        "category": "Site Package.xml Generator"
+      }
+    ],
+    "configuration": {
+      "title": "Site Package.xml Generator",
+      "properties": {
+        "sitePackageGen.sfPath": {
+          "type": "string",
+          "default": "sf",
+          "description": "Path to the Salesforce CLI executable."
+        },
+        "sitePackageGen.includeTestClasses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include matching Apex test classes (e.g. FooTest for Foo)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node esbuild.mjs && node --test out/test.js",
+    "vscode:prepublish": "node esbuild.mjs --production",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}
